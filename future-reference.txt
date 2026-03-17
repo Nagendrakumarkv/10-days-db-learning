@@ -1,0 +1,292 @@
+Here’s your 10-Day Recall Plan to refresh PostgreSQL and MongoDB concepts using a real-world domain project.
+Project: LitCritic – A Book Review Platform (like a mini Goodreads)
+Why this domain?
+
+Books, authors, genres, users → highly relational → perfect for PostgreSQL (normalization, joins, ACID).
+Reviews, ratings, nested comments, user-generated content → flexible & schema-less → perfect for MongoDB.
+You’ll see polyglot persistence in action (both DBs in one app).
+
+Tech Stack (lightweight & beginner-friendly):
+
+Backend: Node.js + Express
+PostgreSQL driver: pg (raw SQL – best for concept recall)
+MongoDB driver: official mongodb package (or Mongoose if you want ODM later)
+No frontend yet → we’ll test everything with Postman/Thunder Client
+Local setup: Docker (recommended) or direct install
+
+You’ll build the full app step-by-step. Every day ends with working code + concept checklist.
+
+Day 1: Setup & Environment (Recall Installation & Basics)
+Goals: Get both DBs running + project skeleton
+Tasks:
+
+Install Docker (or Postgres + MongoDB locally).
+Run:Bashdocker run -d --name postgres-lit -e POSTGRES_PASSWORD=secret -p 5432:5432 postgres:16
+docker run -d --name mongo-lit -p 27017:27017 mongo:7
+Create litcritic folder → npm init -y → install:Bashnpm i express pg mongodb dotenv
+npm i -D nodemon
+Connect to both DBs and write a simple “ping” API.
+Concepts refreshed: Connection strings, databases vs schemas/collections, basic CLI (psql & mongosh).
+
+Mini deliverable: Server running at http://localhost:3000/ping that says “Postgres & MongoDB connected!”
+
+Day 2: PostgreSQL – Schema Design & Normalization
+Goals: Relational modeling
+Tasks:
+
+Design 5 tables (SQL script):
+users, authors, books, genres, book_genres (many-to-many)
+
+Run DDL in psql (primary keys, foreign keys, constraints).
+Insert 10 sample books + authors.
+Concepts refreshed: 3NF normalization, foreign keys, composite keys, data types (TEXT, TIMESTAMP, NUMERIC).
+
+Deliverable: Clean normalized schema ready for queries.
+
+Day 3: PostgreSQL – CRUD + Joins (Core SQL Recall)
+Goals: Master SELECT, INSERT, UPDATE, DELETE with relations
+Tasks:
+
+Build Express routes for:
+POST /books, GET /books (with author & genre join)
+GET /books/:id
+
+Use pg client with parameterized queries (prevent SQL injection).
+Concepts refreshed: INNER/LEFT JOIN, WHERE, ORDER BY, LIMIT/OFFSET, transactions (BEGIN/COMMIT).
+
+Deliverable: Working book catalog API (tested in Postman).
+
+Day 4: PostgreSQL – Advanced Queries & Optimization
+Goals: Aggregates & performance
+Tasks:
+
+Add:
+Average rating per book (but we’ll store rating in Mongo later → simulate with view)
+Search by title/author/genre
+Top 10 books by popularity (using a simple counter column)
+
+Create Indexes & Materialized View.
+Concepts refreshed: GROUP BY, HAVING, Window functions, EXPLAIN ANALYZE, indexing strategy.
+
+Deliverable: Fast search + analytics endpoints.
+
+Day 5: PostgreSQL – Transactions, Functions & Triggers
+Goals: ACID in action
+Tasks:
+
+Implement order placement (simulate buying a book):
+Transaction: reduce stock + create order record
+
+Write a trigger that auto-updates last_updated timestamp.
+Stored function to calculate book popularity score.
+Concepts refreshed: ACID properties, stored procedures/functions, triggers, concurrency (serializable).
+
+Deliverable: Safe “buy book” endpoint that never leaves DB in inconsistent state.
+
+Day 6: MongoDB – Document Model & Flexible Schema
+Goals: Shift from rigid tables to documents
+Tasks:
+
+Design reviews collection:JavaScript{
+  bookId: "postgres-book-id",
+  userId: "postgres-user-id",
+  rating: 4.5,
+  reviewText: "...",
+  comments: [ { userId, text, date, replies: [...] } ]  // nested!
+}
+Insert sample reviews using mongosh.
+Connect with official MongoDB driver in Express.
+Concepts refreshed: BSON, flexible schema, embedded documents vs references, _id ObjectId.
+
+Deliverable: Reviews collection populated.
+
+Day 7: MongoDB – CRUD & Query Operators
+Goals: Powerful find queries
+Tasks:
+
+Routes:
+POST /reviews
+GET /books/:id/reviews (filter by rating > 4, sort by date)
+Update review, delete review
+
+Use $elemMatch for nested comments.
+Concepts refreshed: Query operators ($gt, $in, $regex), projection, sort, limit, upsert.
+
+Deliverable: Full review CRUD API.
+
+Day 8: MongoDB – Aggregation Pipeline & Indexes
+Goals: Analytics like SQL GROUP BY but more powerful
+Tasks:
+
+Build aggregation:
+Average rating per book
+Top reviewers
+Most commented reviews
+
+Add indexes on bookId, rating, date.
+Concepts refreshed: Aggregation pipeline stages ($match, $group, $sort, $lookup), indexing, sharding basics.
+
+Deliverable: Dashboard-style endpoints (e.g., /analytics/top-books).
+
+Day 9: Integration – Polyglot Persistence in Action
+Goals: Use BOTH databases together (real-world pattern)
+Tasks:
+
+Full flow:
+GET /books/:id → fetch book from Postgres + all reviews from MongoDB (in one API response)
+
+Implement “add review” that:
+Validates book exists in Postgres
+Saves review in MongoDB
+
+Simple error handling & cross-DB transactions (app-level).
+Concepts refreshed: When to use SQL vs NoSQL, data consistency strategies, two-phase commit (high-level).
+
+Deliverable: Complete LitCritic backend – one app, two databases.
+
+Day 10: Polish, Comparison & Deployment
+Goals: Consolidate everything + real-world readiness
+Tasks:
+
+Add:
+Simple JWT auth (users table in Postgres)
+Rate limiting
+Basic error logging
+
+Write a comparison report (markdown file):
+When PostgreSQL wins (relations, transactions, ACID)
+When MongoDB wins (flexible schema, nested data, speed for reads)
+
+Deploy:
+Postgres → Supabase (free) or Railway
+MongoDB → MongoDB Atlas (free tier)
+Backend → Render / Railway
+
+Run full test suite in Postman collection.
+
+Final deliverable: Live LitCritic app + GitHub repo + your personal “PostgreSQL vs MongoDB 2026” notes.
+
+How to follow this plan:
+
+Daily time: 2–3 hours (1h theory recall + 1–2h coding)
+Every evening: Commit to Git + write 3 bullet points “What I recalled today”
+If you get stuck on any day → just reply “Day X help” and I’ll give exact code + explanation.
+
+Ready?
+Reply with “Day 1” and we’ll start right now — I’ll give you the complete code files + Docker setup for Day 1.
+Let’s make those concepts crystal clear in 10 days with a real, usable project! 🚀
+
+--------------------------------------------------------------------------------------------------------------------------
+
+Day 1: Setup & Environment (Recall Installation & Basics)
+
+I am absolutely on board! This is a fantastic, well-structured plan. Building a polyglot persistence app (using both SQL and NoSQL where they shine best) is one of the best ways to cement your understanding of database architectures.
+
+I am ready to be your pair-programmer, mentor, and debugger for the next 10 days.
+
+Since you are ready to kick things off, let's dive right into Day 1!
+
+🚀 Day 1: Setup & Environment
+Goal: Get PostgreSQL and MongoDB running via Docker, set up our Node.js skeleton, and successfully connect to both databases.
+
+Step 1: Spin up the Databases (Docker)
+Open your terminal and run these two commands. This will pull the images (if you don't have them) and start the containers in the background (-d).
+
+PostgreSQL:
+
+Bash
+docker run -d --name postgres-lit -e POSTGRES_PASSWORD=secret -p 5432:5432 postgres:16
+MongoDB:
+
+Bash
+docker run -d --name mongo-lit -p 27017:27017 mongo:7
+Step 2: Initialize the Node.js Project
+Create your project folder, initialize npm, and install the required packages.
+
+Bash
+mkdir litcritic
+cd litcritic
+npm init -y
+npm i express pg mongodb dotenv
+npm i -D nodemon
+Next, open your package.json and add a start script for nodemon so the server auto-restarts when we change code:
+
+JSON
+"scripts": {
+  "dev": "nodemon index.js"
+}
+Step 3: Environment Variables
+Create a file named .env in the root of your litcritic folder. This stores our connection strings.
+
+Code snippet
+PORT=3000
+PG_URI=postgres://postgres:secret@localhost:5432/postgres
+MONGO_URI=mongodb://localhost:27017/litcritic
+Step 4: The Code (index.js)
+Create an index.js file. We will import our drivers, connect to both databases, and expose a /ping route.
+
+JavaScript
+require('dotenv').config();
+const express = require('express');
+const { Client } = require('pg');
+const { MongoClient } = require('mongodb');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Initialize Database Clients
+const pgClient = new Client({ connectionString: process.env.PG_URI });
+const mongoClient = new MongoClient(process.env.MONGO_URI);
+
+async function startServer() {
+  try {
+    // 1. Connect to PostgreSQL
+    await pgClient.connect();
+    console.log('✅ PostgreSQL connected successfully!');
+
+    // 2. Connect to MongoDB
+    await mongoClient.connect();
+    console.log('✅ MongoDB connected successfully!');
+    
+    // We can explicitly create/select the database in Mongo
+    const mongoDb = mongoClient.db('litcritic');
+
+    // 3. Simple Ping Route
+    app.get('/ping', (req, res) => {
+      res.status(200).json({ 
+        success: true, 
+        message: "Postgres & MongoDB connected! 🚀" 
+      });
+    });
+
+    // 4. Start Express Server
+    app.listen(port, () => {
+      console.log(`📚 LitCritic server running at http://localhost:${port}`);
+    });
+
+  } catch (error) {
+    console.error('❌ Database connection failed:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
+Step 5: Run It!
+Back in your terminal, run:
+
+Bash
+npm run dev
+You should see logs confirming both databases connected and the server is running. Open your browser or Postman and go to http://localhost:3000/ping.
+
+📝 Day 1 Concept Checklist:
+Connection Strings: Notice how Postgres uses postgres://user:pass@host:port/db while Mongo uses mongodb://host:port/db.
+
+Database creation: In Postgres, the database postgres exists by default. In MongoDB, the litcritic database doesn't actually get created on disk until we insert our first document into it (which we'll do later!).
+
+Async/Await: Database connections are I/O operations, meaning they take time. We use async/await to ensure our server only starts after the databases are ready.
+
+How did Day 1 go? Let me know if you hit any snags with Docker or the connection, or if you're ready to proceed to Day 2 (PostgreSQL Schema Design)!
+
+-----------------------------------------------------------------------------------------------------
+
+
