@@ -120,6 +120,68 @@ async function startServer() {
       }
     });
 
+    // ---------------------------------------------------------
+    // DAY 4: ADVANCED QUERIES & OPTIMIZATION
+    // ---------------------------------------------------------
+
+    // 1. GET /search - Search across title, author, and genre
+    app.get('/search', async (req, res) => {
+      try {
+        const { q } = req.query; // Extracts ?q=something from the URL
+        if (!q) return res.status(400).json({ error: "Missing search query 'q'" });
+
+        // We use % for wildcard matching (e.g., %dune% matches "Children of Dune")
+        const searchQuery = `%${q}%`;
+        
+        // ILIKE is Postgres-specific for Case-Insensitive matching
+        const query = `
+          SELECT DISTINCT b.id, b.title, a.name AS author, g.name AS genre
+          FROM books b
+          INNER JOIN authors a ON b.author_id = a.id
+          LEFT JOIN book_genres bg ON b.id = bg.book_id
+          LEFT JOIN genres g ON bg.genre_id = g.id
+          WHERE b.title ILIKE $1 
+             OR a.name ILIKE $1 
+             OR g.name ILIKE $1;
+        `;
+        const result = await pgClient.query(query, [searchQuery]);
+        res.status(200).json(result.rows);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Search failed" });
+      }
+    });
+
+    // 2. GET /analytics/top-books - Fast sorting using our new column
+    app.get('/analytics/top-books', async (req, res) => {
+      try {
+        const query = `
+          SELECT id, title, views_count 
+          FROM books 
+          ORDER BY views_count DESC 
+          LIMIT 10;
+        `;
+        const result = await pgClient.query(query);
+        res.status(200).json(result.rows);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch top books" });
+      }
+    });
+
+    // 3. GET /analytics/ratings - Fetching from the Materialized View!
+    app.get('/analytics/ratings', async (req, res) => {
+      try {
+        // Notice we are querying the VIEW, not the base tables. It's lightning fast.
+        const query = `SELECT * FROM mv_book_ratings ORDER BY avg_rating DESC NULLS LAST;`;
+        const result = await pgClient.query(query);
+        res.status(200).json(result.rows);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch ratings" });
+      }
+    });
+
     // 4. Start Express Server
     app.listen(port, () => {
       console.log(`📚 LitCritic server running at http://localhost:${port}`);

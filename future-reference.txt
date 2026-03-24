@@ -552,4 +552,147 @@ Test out those endpoints in Postman. How does the JSON response look? Let me kno
 
 Day 4: PostgreSQL – Advanced Queries & Optimization
 
+Excellent! It's great to see you successfully navigating those database connection quirks. That’s a huge part of real-world backend development.
+
+Welcome to Day 4. Today, we shift gears from just storing data to making our database smart and fast. We are going to implement search, popularity rankings, and heavy aggregations.
+
+To calculate average ratings today, we are going to create a temporary mock_reviews table in PostgreSQL. On Day 6, we will delete this table and move reviews over to MongoDB (where nested user-generated content truly belongs), but building it in SQL today is crucial for practicing your GROUP BY and View concepts.
+
+🗄️ Step 1: Database Updates (SQL)
+Open pgAdmin's Query Tool (or your Docker psql terminal) and run this script. It will add a popularity counter, create our mock reviews, seed some data, and—most importantly—build our Indexes and Materialized View.
+
+SQL
+-- 1. Add a popularity counter to our books
+ALTER TABLE books ADD COLUMN views_count INTEGER DEFAULT 0;
+
+-- Give our existing books some random views so we have data to sort
+UPDATE books SET views_count = floor(random() * 1000 + 1);
+
+-- 2. Create a temporary mock_reviews table
+CREATE TABLE mock_reviews (
+    id SERIAL PRIMARY KEY,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    rating NUMERIC(2,1) CHECK (rating >= 1 AND rating <= 5),
+    review_text TEXT
+);
+
+-- Insert some fake ratings for Dune, Dune Messiah, and 1984
+INSERT INTO mock_reviews (book_id, rating) VALUES
+(1, 4.5), (1, 5.0), (1, 4.0),
+(2, 3.5), (2, 4.0),
+(3, 5.0), (3, 4.8), (3, 4.9);
+
+-- 3. OPTIMIZATION: Create Indexes
+-- Indexes act like the index at the back of a book, drastically speeding up searches
+CREATE INDEX idx_books_title ON books(title);
+CREATE INDEX idx_authors_name ON authors(name);
+
+-- 4. OPTIMIZATION: Create a Materialized View for Analytics
+-- This runs a heavy calculation ONCE and saves the result as a physical table
+CREATE MATERIALIZED VIEW mv_book_ratings AS
+SELECT 
+    b.id AS book_id,
+    b.title,
+    ROUND(AVG(r.rating), 2) AS avg_rating,
+    COUNT(r.id) AS review_count
+FROM books b
+LEFT JOIN mock_reviews r ON b.id = r.book_id
+GROUP BY b.id, b.title;
+
+-- Required to allow us to refresh the view concurrently later
+CREATE UNIQUE INDEX idx_mv_book_ratings_id ON mv_book_ratings(book_id);
+💻 Step 2: The Express Routes (index.js)
+Now let's expose this powerful new data via our Node.js API. Add these three routes to your index.js file (right below your other /books routes).
+
+JavaScript
+    // ---------------------------------------------------------
+    // DAY 4: ADVANCED QUERIES & OPTIMIZATION
+    // ---------------------------------------------------------
+
+    // 1. GET /search - Search across title, author, and genre
+    app.get('/search', async (req, res) => {
+      try {
+        const { q } = req.query; // Extracts ?q=something from the URL
+        if (!q) return res.status(400).json({ error: "Missing search query 'q'" });
+
+        // We use % for wildcard matching (e.g., %dune% matches "Children of Dune")
+        const searchQuery = `%${q}%`;
+        
+        // ILIKE is Postgres-specific for Case-Insensitive matching
+        const query = `
+          SELECT DISTINCT b.id, b.title, a.name AS author
+          FROM books b
+          INNER JOIN authors a ON b.author_id = a.id
+          LEFT JOIN book_genres bg ON b.id = bg.book_id
+          LEFT JOIN genres g ON bg.genre_id = g.id
+          WHERE b.title ILIKE $1 
+             OR a.name ILIKE $1 
+             OR g.name ILIKE $1;
+        `;
+        const result = await pgClient.query(query, [searchQuery]);
+        res.status(200).json(result.rows);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Search failed" });
+      }
+    });
+
+    // 2. GET /analytics/top-books - Fast sorting using our new column
+    app.get('/analytics/top-books', async (req, res) => {
+      try {
+        const query = `
+          SELECT id, title, views_count 
+          FROM books 
+          ORDER BY views_count DESC 
+          LIMIT 10;
+        `;
+        const result = await pgClient.query(query);
+        res.status(200).json(result.rows);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch top books" });
+      }
+    });
+
+    // 3. GET /analytics/ratings - Fetching from the Materialized View!
+    app.get('/analytics/ratings', async (req, res) => {
+      try {
+        // Notice we are querying the VIEW, not the base tables. It's lightning fast.
+        const query = `SELECT * FROM mv_book_ratings ORDER BY avg_rating DESC NULLS LAST;`;
+        const result = await pgClient.query(query);
+        res.status(200).json(result.rows);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch ratings" });
+      }
+    });
+🧪 Step 3: Test in Postman
+Save your code, let Nodemon restart, and test your new endpoints:
+
+Test the Search: GET http://localhost:3000/search?q=sci
+
+This should return books in the "Science Fiction" genre! Try searching for "orwell" next.
+
+Test Top Books: GET http://localhost:3000/analytics/top-books
+
+Returns your books sorted by the random views_count we generated.
+
+Test the View: GET http://localhost:3000/analytics/ratings
+
+Returns the pre-calculated math for our books. Notice how clean the response is!
+
+🧠 Day 4 Concept Checklist:
+GROUP BY & Aggregates: In our SQL script, we used AVG() and COUNT(). You must use GROUP BY when mixing aggregate functions with normal columns (like title), so Postgres knows how to group the math.
+
+Indexes: By adding an Index on title, Postgres creates a highly optimized B-Tree under the hood. When millions of users search for a book, Postgres no longer has to scan every single row one by one (Sequential Scan); it jumps straight to the answer (Index Scan).
+
+Materialized Views: Standard Views run the query every single time they are called. A Materialized View runs the query once and saves the actual data to the disk. It trades a tiny bit of storage space for massive read performance. (Note: If new reviews are added, you have to run REFRESH MATERIALIZED VIEW mv_book_ratings; to update it!).
+
+EXPLAIN ANALYZE: Want to see the indexes in action? Go to pgAdmin's query tool and run EXPLAIN ANALYZE SELECT * FROM books WHERE title = 'Dune';. It will spit out a report showing exactly how many milliseconds the database took to plan and execute the query!
+
+Run those tests in Postman. Does your search route return the correct data? Let me know, or simply reply "Day 5" when you are ready to tackle Transactions, Functions, and Triggers!
+
+-------------------------------------------------------------------------------------------------
+
+Day 5: PostgreSQL – Transactions, Functions & Triggers
 
