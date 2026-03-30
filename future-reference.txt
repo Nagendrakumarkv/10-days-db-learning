@@ -861,6 +861,71 @@ You've now mastered the core, heavy-lifting concepts of PostgreSQL! Let me know 
 
 Would you like to wrap up the SQL portion and officially start Day 6: MongoDB – Document Model & Flexible Schema?
 
+Question: I want to know the flow like how api triggered and which triggers or functions are called
+
+Gemini said
+This is a brilliant question. When you start mixing application code (Node.js) with database logic (Triggers/Functions), it can get a little hazy figuring out exactly who is doing what, and in what order.
+
+Let's break down the exact timeline of a single request hitting our POST /orders API.
+
+Here is the step-by-step journey of that data, from the moment you click "Send" in Postman:
+
+🌊 The Execution Flow: POST /orders
+1. The Client Trigger (Postman)
+You send an HTTP POST request with { "book_id": 1, "user_id": 99 } to http://localhost:3000/orders.
+
+2. The Express Route (Node.js)
+Your Node.js server receives the request, parses the JSON body, and enters the app.post('/orders') route.
+
+3. The Transaction Begins (Node.js ➡️ PostgreSQL)
+Node.js sends the BEGIN command to Postgres. A protective "bubble" is created. Nothing inside this bubble is permanent until we say so.
+
+4. The Row Lock (Node.js ➡️ PostgreSQL)
+Node.js sends: SELECT stock FROM books WHERE id = 1 FOR UPDATE;
+
+Behind the scenes: Postgres finds the row for Dune and puts a padlock on it. If another user tries to buy Dune at this exact millisecond, Postgres forces them to wait.
+
+5. The Application Check (Node.js)
+Node.js looks at the stock number it just received. Is it greater than 0? Yes. The flow continues.
+
+6. The Update Query (Node.js ➡️ PostgreSQL)
+Node.js sends: UPDATE books SET stock = stock - 1 WHERE id = 1;
+
+7. ⚡ THE TRIGGER FIRES (Inside PostgreSQL)
+Stop right here! Before Postgres actually saves that update to the hard drive, its internal alarm goes off.
+
+Postgres sees we created a BEFORE UPDATE ON books trigger named set_timestamp.
+
+Postgres automatically halts the update process and executes the attached function: update_modified_column().
+
+The Function's Job: It looks at the incoming data (NEW), grabs the last_updated column, and forces it to equal the current clock time.
+
+Now Postgres allows the update to finish, saving both the new stock number AND the new timestamp. (Node.js had no idea this happened!).
+
+8. The Insert Query (Node.js ➡️ PostgreSQL)
+Node.js sends: INSERT INTO orders (book_id, user_id) VALUES (1, 99);
+
+9. The Commit (Node.js ➡️ PostgreSQL)
+Node.js sends the COMMIT command.
+
+Postgres officially saves everything to the disk.
+
+Postgres unlocks the Dune row so other waiting users can now buy it.
+
+10. The Response (Node.js ➡️ Client)
+Node.js packages up a success message and sends an HTTP 201 Created status back to Postman.
+
+🤔 Wait, what about the Popularity Function?
+You might notice that our stored function get_book_popularity() was not triggered during the purchase flow!
+
+Triggers happen automatically in the background based on database events (like an UPDATE).
+
+Functions only run when explicitly called.
+
+Our popularity function only executes when Node.js explicitly asks for it by sending SELECT get_book_popularity(1); via the GET /books/:id/popularity endpoint.
+
+Does mapping out the timeline like this help clarify how the app and the database pass the baton back and forth? If that makes sense, we can officially shift paradigms and dive into Day 6: MongoDB & the Flexible Document Model!
+
 --------------------------------------------------------------------------------------------
 
 Day 6: MongoDB – Document Model & Flexible Schema
