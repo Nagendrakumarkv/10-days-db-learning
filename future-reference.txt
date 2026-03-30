@@ -696,3 +696,171 @@ Run those tests in Postman. Does your search route return the correct data? Let 
 
 Day 5: PostgreSQL – Transactions, Functions & Triggers
 
+You are officially at the halfway mark! Day 5 is where we separate the basic CRUD apps from enterprise-grade software. Today is all about ACID properties, concurrency, and pushing logic down into the database itself.
+
+When money or inventory is involved (like buying a book), we cannot risk the Node.js server crashing halfway through a request and leaving our data corrupted. We also want to automate repetitive tasks directly in PostgreSQL.
+
+Let’s add inventory control, triggers, and stored functions to LitCritic.
+
+🗄️ Step 1: Database Updates (Functions & Triggers)
+First, we need to add stock and last_updated columns to our books, and create an orders table. Then, we will write a trigger to automatically update that timestamp, and a function to calculate a dynamic popularity score.
+
+Open pgAdmin's Query Tool (or your Docker psql terminal) and run this SQL script:
+
+SQL
+-- 1. Add Stock and Timestamp columns
+ALTER TABLE books ADD COLUMN stock INTEGER DEFAULT 10;
+ALTER TABLE books ADD COLUMN last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+-- 2. Create an Orders table
+CREATE TABLE orders (
+    id SERIAL PRIMARY KEY,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    user_id INTEGER, -- We will use a fake integer for now (e.g., User 99)
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. THE TRIGGER FUNCTION: What happens when a book is updated?
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- 'NEW' holds the new row data being updated
+    NEW.last_updated = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 4. THE TRIGGER: When does the function run?
+CREATE TRIGGER set_timestamp
+BEFORE UPDATE ON books
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
+
+-- 5. THE STORED FUNCTION: Calculate dynamic popularity
+-- Score = Views + (Total Orders * 50)
+CREATE OR REPLACE FUNCTION get_book_popularity(b_id INTEGER)
+RETURNS INTEGER AS $$
+DECLARE
+    v_views INTEGER;
+    v_orders INTEGER;
+    total_score INTEGER;
+BEGIN
+    -- Fetch current views
+    SELECT views_count INTO v_views FROM books WHERE id = b_id;
+    -- Fetch total orders for this book
+    SELECT COUNT(*) INTO v_orders FROM orders WHERE book_id = b_id;
+    
+    -- Calculate and return the score
+    total_score := COALESCE(v_views, 0) + (COALESCE(v_orders, 0) * 50);
+    RETURN total_score;
+END;
+$$ LANGUAGE plpgsql;
+💻 Step 2: The Express Routes (index.js)
+Now, let's implement the "Buy Book" endpoint. We will use a strict Transaction with a Row-Level Lock (FOR UPDATE). This guarantees that if two users try to buy the last copy of Dune at the exact same millisecond, only one will succeed.
+
+Add these two routes to your index.js file:
+
+JavaScript
+    // ---------------------------------------------------------
+    // DAY 5: TRANSACTIONS, TRIGGERS & FUNCTIONS
+    // ---------------------------------------------------------
+
+    // 1. POST /orders - Buy a book (ACID Transaction)
+    app.post('/orders', async (req, res) => {
+      const { book_id, user_id } = req.body;
+
+      try {
+        await pgClient.query('BEGIN'); // Start Transaction
+
+        // Step A: Check stock and LOCK THE ROW so no other transaction can modify it
+        const checkStockQuery = 'SELECT stock FROM books WHERE id = $1 FOR UPDATE';
+        const stockResult = await pgClient.query(checkStockQuery, [book_id]);
+
+        if (stockResult.rows.length === 0) {
+          await pgClient.query('ROLLBACK');
+          return res.status(404).json({ error: "Book not found" });
+        }
+
+        const currentStock = stockResult.rows[0].stock;
+        
+        // Step B: Application-level consistency check
+        if (currentStock <= 0) {
+          await pgClient.query('ROLLBACK');
+          return res.status(400).json({ error: "Sorry, this book is out of stock!" });
+        }
+
+        // Step C: Reduce stock (Our PostgreSQL Trigger will auto-update 'last_updated' here!)
+        const updateStockQuery = 'UPDATE books SET stock = stock - 1 WHERE id = $1';
+        await pgClient.query(updateStockQuery, [book_id]);
+
+        // Step D: Record the order
+        const insertOrderQuery = 'INSERT INTO orders (book_id, user_id) VALUES ($1, $2) RETURNING id';
+        const orderResult = await pgClient.query(insertOrderQuery, [book_id, user_id]);
+
+        await pgClient.query('COMMIT'); // Commit Transaction (Save permanently)
+
+        res.status(201).json({
+          success: true,
+          message: "Order placed successfully!",
+          orderId: orderResult.rows[0].id
+        });
+
+      } catch (err) {
+        await pgClient.query('ROLLBACK'); // Undo everything on error
+        console.error(err);
+        res.status(500).json({ error: "Transaction failed. Order cancelled." });
+      }
+    });
+
+    // 2. GET /books/:id/popularity - Execute our Stored Function
+    app.get('/books/:id/popularity', async (req, res) => {
+      try {
+        // We call the function directly in the SELECT statement
+        const query = 'SELECT get_book_popularity($1) AS score';
+        const result = await pgClient.query(query, [req.params.id]);
+        
+        res.status(200).json({ book_id: req.params.id, popularity_score: result.rows[0].score });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to calculate popularity" });
+      }
+    });
+🧪 Step 3: Test the ACID Flow in Postman
+Save your code and try this sequence in Postman:
+
+Check Popularity: GET http://localhost:3000/books/1/popularity
+
+Note the score.
+
+Buy the Book: POST http://localhost:3000/orders
+
+Body (JSON): { "book_id": 1, "user_id": 99 }
+
+Hit send! You should get a success message.
+
+Check Popularity Again: GET http://localhost:3000/books/1/popularity
+
+The score should have jumped up by 50 points because of the new order!
+
+Verify the Trigger: Check your database (SELECT stock, last_updated FROM books WHERE id = 1;). You will see the stock went down to 9, and the last_updated timestamp was automatically changed to exactly when you placed the order.
+
+🧠 Day 5 Concept Checklist:
+ACID in Action: * Atomicity: Both the stock reduction and order creation succeed, or neither do (BEGIN / COMMIT / ROLLBACK).
+
+Consistency: Our code prevents stock from dropping below zero.
+
+Isolation: FOR UPDATE locks the book row. If 100 users try to buy it at once, Postgres forces them into a queue, preventing race conditions.
+
+Durability: Once committed, the order is safe even if the Docker container loses power a second later.
+
+Triggers vs Application Logic: Instead of writing last_updated: new Date() in our Node.js UPDATE query, we gave that job to the database. This guarantees the timestamp updates no matter who or what modifies the table (whether it's our Node app, Python script, or a manual pgAdmin edit).
+
+Stored Functions (plpgsql): We encapsulated the complex math of "Popularity" safely inside the database engine, reducing the amount of data we have to send over the network.
+
+You've now mastered the core, heavy-lifting concepts of PostgreSQL! Let me know if the tests pass.
+
+Would you like to wrap up the SQL portion and officially start Day 6: MongoDB – Document Model & Flexible Schema?
+
+--------------------------------------------------------------------------------------------
+
+Day 6: MongoDB – Document Model & Flexible Schema

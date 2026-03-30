@@ -27,6 +27,11 @@ async function startServer() {
     // We can explicitly create/select the database in Mongo
     const mongoDb = mongoClient.db('litcritic');
 
+    // Hello World Route
+    app.get('/hello-world', (req, res) => {
+      res.status(200).send("Hi All");
+    });
+
     // 3. Simple Ping Route
     app.get('/ping', (req, res) => {
       res.status(200).json({ 
@@ -179,6 +184,71 @@ async function startServer() {
       } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch ratings" });
+      }
+    });
+
+    // ---------------------------------------------------------
+    // DAY 5: TRANSACTIONS, TRIGGERS & FUNCTIONS
+    // ---------------------------------------------------------
+
+    // 1. POST /orders - Buy a book (ACID Transaction)
+    app.post('/orders', async (req, res) => {
+      const { book_id, user_id } = req.body;
+
+      try {
+        await pgClient.query('BEGIN'); // Start Transaction
+
+        // Step A: Check stock and LOCK THE ROW so no other transaction can modify it
+        const checkStockQuery = 'SELECT stock FROM books WHERE id = $1 FOR UPDATE';
+        const stockResult = await pgClient.query(checkStockQuery, [book_id]);
+
+        if (stockResult.rows.length === 0) {
+          await pgClient.query('ROLLBACK');
+          return res.status(404).json({ error: "Book not found" });
+        }
+
+        const currentStock = stockResult.rows[0].stock;
+        
+        // Step B: Application-level consistency check
+        if (currentStock <= 0) {
+          await pgClient.query('ROLLBACK');
+          return res.status(400).json({ error: "Sorry, this book is out of stock!" });
+        }
+
+        // Step C: Reduce stock (Our PostgreSQL Trigger will auto-update 'last_updated' here!)
+        const updateStockQuery = 'UPDATE books SET stock = stock - 1 WHERE id = $1';
+        await pgClient.query(updateStockQuery, [book_id]);
+
+        // Step D: Record the order
+        const insertOrderQuery = 'INSERT INTO orders (book_id, user_id) VALUES ($1, $2) RETURNING id';
+        const orderResult = await pgClient.query(insertOrderQuery, [book_id, user_id]);
+
+        await pgClient.query('COMMIT'); // Commit Transaction (Save permanently)
+
+        res.status(201).json({
+          success: true,
+          message: "Order placed successfully!",
+          orderId: orderResult.rows[0].id
+        });
+
+      } catch (err) {
+        await pgClient.query('ROLLBACK'); // Undo everything on error
+        console.error(err);
+        res.status(500).json({ error: "Transaction failed. Order cancelled." });
+      }
+    });
+
+    // 2. GET /books/:id/popularity - Execute our Stored Function
+    app.get('/books/:id/popularity', async (req, res) => {
+      try {
+        // We call the function directly in the SELECT statement
+        const query = 'SELECT get_book_popularity($1) AS score';
+        const result = await pgClient.query(query, [req.params.id]);
+        
+        res.status(200).json({ book_id: req.params.id, popularity_score: result.rows[0].score });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to calculate popularity" });
       }
     });
 
