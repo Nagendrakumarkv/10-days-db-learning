@@ -25,7 +25,7 @@ async function startServer() {
     console.log('✅ MongoDB connected successfully!');
     
     // We can explicitly create/select the database in Mongo
-    const mongoDb = mongoClient.db('litcritic');
+    const mongoDb = mongoClient.db('bookstore');
 
     // Hello World Route
     app.get('/hello-world', (req, res) => {
@@ -251,6 +251,17 @@ async function startServer() {
         res.status(500).json({ error: "Failed to calculate popularity" });
       }
     });
+
+    // A quick test route to fetch the review you just created in mongosh
+app.get('/api/reviews', async (req, res) => {
+  try {
+    // Fetch all reviews
+    const reviews = await mongoDb.collection('reviews').find({}).toArray();
+    res.json(reviews);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch reviews" });
+  }
+});
 
     // 4. Start Express Server
     app.listen(port, () => {

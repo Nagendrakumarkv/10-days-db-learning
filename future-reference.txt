@@ -929,3 +929,123 @@ Does mapping out the timeline like this help clarify how the app and the databas
 --------------------------------------------------------------------------------------------
 
 Day 6: MongoDB – Document Model & Flexible Schema
+
+Welcome to Day 6! Today is a major paradigm shift. You are leaving the strict, tabular world of SQL and entering the flexible, document-based world of NoSQL.
+
+Let’s quickly refresh the core concepts before we write some code:
+
+BSON & Flexible Schema: MongoDB stores data in BSON (Binary JSON). It looks like JSON to us, but it's optimized for speed and supports extra data types (like Dates and ObjectIds). Unlike SQL tables, MongoDB collections don't enforce a rigid schema by default. Two documents in the same collection can have entirely different fields.
+
+Embedded Documents vs. References: This is the most important MongoDB design concept.
+
+References (like SQL foreign keys) are used when data grows infinitely (e.g., a user's purchase history).
+
+Embedding is used for data that is frequently read together and doesn't grow infinitely. In our case, embedding comments directly inside the review document is perfect because when we fetch a review, we almost always want to see its comments immediately.
+
+_id ObjectId: Every document gets a unique _id automatically. It’s not just a random string; an ObjectId is a 12-byte identifier that actually contains a timestamp of when it was created!
+
+Let's knock out today's deliverables.
+
+Task 1: Insert Sample Reviews using mongosh
+First, make sure your local MongoDB server is running (or you have your MongoDB Atlas connection string ready). Open your terminal and start the MongoDB shell by typing mongosh.
+
+Once inside, run the following commands to create your database, collection, and insert your first deeply nested document.
+
+JavaScript
+// 1. Switch to a new database (it creates it automatically)
+use bookstore;
+
+// 2. Insert a sample review with nested comments and replies
+db.reviews.insertOne({
+  bookId: "postgres-book-id-123", // Pretend this references your Postgres DB
+  userId: "postgres-user-id-456",
+  rating: 4.5,
+  reviewText: "An incredible deep-dive into database architectures.",
+  createdAt: new Date(),
+  comments: [
+    {
+      userId: "user-789",
+      text: "I completely agree, chapter 4 was a lifesaver.",
+      date: new Date(),
+      replies: [
+        {
+          userId: "postgres-user-id-456",
+          text: "Glad you liked it! Did you try the exercises?",
+          date: new Date()
+        }
+      ]
+    }
+  ]
+});
+
+// 3. Verify it was inserted
+db.reviews.find().pretty();
+Notice how natural this feels? In Postgres, this would have required three separate tables (reviews, comments, comment_replies) and multiple JOIN statements.
+
+Task 2: Connect with the Official MongoDB Driver in Express
+Now, let's wire this up to your Node.js/Express backend.
+
+First, install the official driver in your project folder:
+
+Bash
+npm install mongodb
+Next, create or update your server file to establish the connection. Here is a clean, modern way to structure your MongoDB connection in Express:
+
+JavaScript
+const express = require('express');
+const { MongoClient, ObjectId } = require('mongodb');
+
+const app = express();
+app.use(express.json());
+
+// Connection URI - Update this if using MongoDB Atlas
+const uri = "mongodb://localhost:27017"; 
+const client = new MongoClient(uri);
+
+let db; // Global variable to hold our database instance
+
+// Connect to MongoDB
+async function connectToMongo() {
+  try {
+    await client.connect();
+    db = client.db('bookstore');
+    console.log("✅ Successfully connected to MongoDB!");
+  } catch (error) {
+    console.error("❌ MongoDB connection error:", error);
+    process.exit(1); // Exit if we can't connect
+  }
+}
+
+// A quick test route to fetch the review you just created in mongosh
+app.get('/api/reviews', async (req, res) => {
+  try {
+    // Fetch all reviews
+    const reviews = await db.collection('reviews').find({}).toArray();
+    res.json(reviews);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch reviews" });
+  }
+});
+
+// Start the server and connect to the DB
+const PORT = 3000;
+app.listen(PORT, async () => {
+  console.log(`Server is running on port ${PORT}`);
+  await connectToMongo();
+});
+Day 6 Deliverable Checklist:
+[ ] Connect to mongosh.
+
+[ ] Insert 2 or 3 sample reviews with nested comments using the schema provided.
+
+[ ] Install the mongodb package in your Express app.
+
+[ ] Successfully log "✅ Successfully connected to MongoDB!" in your terminal.
+
+[ ] Hit the /api/reviews endpoint in Postman or your browser and see your nested JSON data returned.
+
+Let me know if you run into any connection errors, or if you're ready to start querying and updating these nested arrays!
+
+------------------------------------------------------------------------------------------------
+
+Day 7: MongoDB – CRUD & Query Operators
