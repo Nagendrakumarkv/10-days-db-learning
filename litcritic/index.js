@@ -1,47 +1,50 @@
-require('dotenv').config();
-const express = require('express');
-const { Client } = require('pg');
-const { MongoClient } = require('mongodb');
+require("dotenv").config();
+const express = require("express");
+const { Client } = require("pg");
+const mongoose = require("mongoose"); // <-- Added Mongoose
+const reviewsRouter = require("./routes/reviews");
 
 const app = express();
 
 // Middleware to parse JSON bodies
 app.use(express.json());
 
+// Mount the router
+// Note: In my previous code, the routes in reviews.js didn't have '/api/reviews' in them.
+// By mounting it here, ALL routes in reviews.js automatically start with /api/reviews
+app.use("/api/reviews", reviewsRouter);
+
 const port = process.env.PORT || 3000;
 
-// Initialize Database Clients
+// Initialize PostgreSQL Client
 const pgClient = new Client({ connectionString: process.env.PG_URI });
-const mongoClient = new MongoClient(process.env.MONGO_URI);
 
 async function startServer() {
   try {
     // 1. Connect to PostgreSQL
     await pgClient.connect();
-    console.log('✅ PostgreSQL connected successfully!');
+    console.log("✅ PostgreSQL connected successfully!");
 
-    // 2. Connect to MongoDB
-    await mongoClient.connect();
-    console.log('✅ MongoDB connected successfully!');
-    
-    // We can explicitly create/select the database in Mongo
-    const mongoDb = mongoClient.db('bookstore');
+    // 2. Connect to MongoDB using Mongoose instead of MongoClient
+    // Mongoose handles the connection globally for all your models
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log("✅ MongoDB (Mongoose) connected successfully!");
 
     // Hello World Route
-    app.get('/hello-world', (req, res) => {
+    app.get("/hello-world", (req, res) => {
       res.status(200).send("Hi All");
     });
 
     // 3. Simple Ping Route
-    app.get('/ping', (req, res) => {
-      res.status(200).json({ 
-        success: true, 
-        message: "Postgres & MongoDB connected! 🚀" 
+    app.get("/ping", (req, res) => {
+      res.status(200).json({
+        success: true,
+        message: "Postgres & MongoDB connected! 🚀",
       });
     });
 
     // GET /books - Fetch all books with authors and genres
-    app.get('/books', async (req, res) => {
+    app.get("/books", async (req, res) => {
       try {
         const query = `
           SELECT 
@@ -66,7 +69,7 @@ async function startServer() {
     });
 
     // GET /books/:id - Fetch a single book
-    app.get('/books/:id', async (req, res) => {
+    app.get("/books/:id", async (req, res) => {
       try {
         const bookId = req.params.id;
         const query = `
@@ -88,19 +91,23 @@ async function startServer() {
     });
 
     // POST /books - Create a new book with genres (Using a Transaction)
-    app.post('/books', async (req, res) => {
+    app.post("/books", async (req, res) => {
       const { title, author_id, published_year, genre_ids } = req.body;
 
       try {
         // 1. Start Transaction
-        await pgClient.query('BEGIN');
+        await pgClient.query("BEGIN");
 
         // 2. Insert into Books table and return the new ID
         const insertBookQuery = `
           INSERT INTO books (title, author_id, published_year) 
           VALUES ($1, $2, $3) RETURNING id;
         `;
-        const bookResult = await pgClient.query(insertBookQuery, [title, author_id, published_year]);
+        const bookResult = await pgClient.query(insertBookQuery, [
+          title,
+          author_id,
+          published_year,
+        ]);
         const newBookId = bookResult.rows[0].id;
 
         // 3. Insert into Book_Genres join table (if genres were provided)
@@ -114,14 +121,18 @@ async function startServer() {
         }
 
         // 4. Commit Transaction (Save permanently)
-        await pgClient.query('COMMIT');
+        await pgClient.query("COMMIT");
 
-        res.status(201).json({ success: true, message: "Book created!", bookId: newBookId });
+        res
+          .status(201)
+          .json({ success: true, message: "Book created!", bookId: newBookId });
       } catch (err) {
         // 5. Rollback Transaction on error (Undo everything)
-        await pgClient.query('ROLLBACK');
+        await pgClient.query("ROLLBACK");
         console.error(err);
-        res.status(500).json({ error: "Transaction failed. No data was saved." });
+        res
+          .status(500)
+          .json({ error: "Transaction failed. No data was saved." });
       }
     });
 
@@ -130,14 +141,15 @@ async function startServer() {
     // ---------------------------------------------------------
 
     // 1. GET /search - Search across title, author, and genre
-    app.get('/search', async (req, res) => {
+    app.get("/search", async (req, res) => {
       try {
         const { q } = req.query; // Extracts ?q=something from the URL
-        if (!q) return res.status(400).json({ error: "Missing search query 'q'" });
+        if (!q)
+          return res.status(400).json({ error: "Missing search query 'q'" });
 
         // We use % for wildcard matching (e.g., %dune% matches "Children of Dune")
         const searchQuery = `%${q}%`;
-        
+
         // ILIKE is Postgres-specific for Case-Insensitive matching
         const query = `
           SELECT DISTINCT b.id, b.title, a.name AS author, g.name AS genre
@@ -158,7 +170,7 @@ async function startServer() {
     });
 
     // 2. GET /analytics/top-books - Fast sorting using our new column
-    app.get('/analytics/top-books', async (req, res) => {
+    app.get("/analytics/top-books", async (req, res) => {
       try {
         const query = `
           SELECT id, title, views_count 
@@ -175,7 +187,7 @@ async function startServer() {
     });
 
     // 3. GET /analytics/ratings - Fetching from the Materialized View!
-    app.get('/analytics/ratings', async (req, res) => {
+    app.get("/analytics/ratings", async (req, res) => {
       try {
         // Notice we are querying the VIEW, not the base tables. It's lightning fast.
         const query = `SELECT * FROM mv_book_ratings ORDER BY avg_rating DESC NULLS LAST;`;
@@ -192,60 +204,72 @@ async function startServer() {
     // ---------------------------------------------------------
 
     // 1. POST /orders - Buy a book (ACID Transaction)
-    app.post('/orders', async (req, res) => {
+    app.post("/orders", async (req, res) => {
       const { book_id, user_id } = req.body;
 
       try {
-        await pgClient.query('BEGIN'); // Start Transaction
+        await pgClient.query("BEGIN"); // Start Transaction
 
         // Step A: Check stock and LOCK THE ROW so no other transaction can modify it
-        const checkStockQuery = 'SELECT stock FROM books WHERE id = $1 FOR UPDATE';
+        const checkStockQuery =
+          "SELECT stock FROM books WHERE id = $1 FOR UPDATE";
         const stockResult = await pgClient.query(checkStockQuery, [book_id]);
 
         if (stockResult.rows.length === 0) {
-          await pgClient.query('ROLLBACK');
+          await pgClient.query("ROLLBACK");
           return res.status(404).json({ error: "Book not found" });
         }
 
         const currentStock = stockResult.rows[0].stock;
-        
+
         // Step B: Application-level consistency check
         if (currentStock <= 0) {
-          await pgClient.query('ROLLBACK');
-          return res.status(400).json({ error: "Sorry, this book is out of stock!" });
+          await pgClient.query("ROLLBACK");
+          return res
+            .status(400)
+            .json({ error: "Sorry, this book is out of stock!" });
         }
 
         // Step C: Reduce stock (Our PostgreSQL Trigger will auto-update 'last_updated' here!)
-        const updateStockQuery = 'UPDATE books SET stock = stock - 1 WHERE id = $1';
+        const updateStockQuery =
+          "UPDATE books SET stock = stock - 1 WHERE id = $1";
         await pgClient.query(updateStockQuery, [book_id]);
 
         // Step D: Record the order
-        const insertOrderQuery = 'INSERT INTO orders (book_id, user_id) VALUES ($1, $2) RETURNING id';
-        const orderResult = await pgClient.query(insertOrderQuery, [book_id, user_id]);
+        const insertOrderQuery =
+          "INSERT INTO orders (book_id, user_id) VALUES ($1, $2) RETURNING id";
+        const orderResult = await pgClient.query(insertOrderQuery, [
+          book_id,
+          user_id,
+        ]);
 
-        await pgClient.query('COMMIT'); // Commit Transaction (Save permanently)
+        await pgClient.query("COMMIT"); // Commit Transaction (Save permanently)
 
         res.status(201).json({
           success: true,
           message: "Order placed successfully!",
-          orderId: orderResult.rows[0].id
+          orderId: orderResult.rows[0].id,
         });
-
       } catch (err) {
-        await pgClient.query('ROLLBACK'); // Undo everything on error
+        await pgClient.query("ROLLBACK"); // Undo everything on error
         console.error(err);
         res.status(500).json({ error: "Transaction failed. Order cancelled." });
       }
     });
 
     // 2. GET /books/:id/popularity - Execute our Stored Function
-    app.get('/books/:id/popularity', async (req, res) => {
+    app.get("/books/:id/popularity", async (req, res) => {
       try {
         // We call the function directly in the SELECT statement
-        const query = 'SELECT get_book_popularity($1) AS score';
+        const query = "SELECT get_book_popularity($1) AS score";
         const result = await pgClient.query(query, [req.params.id]);
-        
-        res.status(200).json({ book_id: req.params.id, popularity_score: result.rows[0].score });
+
+        res
+          .status(200)
+          .json({
+            book_id: req.params.id,
+            popularity_score: result.rows[0].score,
+          });
       } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to calculate popularity" });
@@ -253,23 +277,21 @@ async function startServer() {
     });
 
     // A quick test route to fetch the review you just created in mongosh
-app.get('/api/reviews', async (req, res) => {
-  try {
-    // Fetch all reviews
-    const reviews = await mongoDb.collection('reviews').find({}).toArray();
-    res.json(reviews);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch reviews" });
-  }
-});
-
+    app.get("/api/reviews", async (req, res) => {
+      try {
+        // Fetch all reviews
+        const reviews = await mongoDb.collection("reviews").find({}).toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to fetch reviews" });
+      }
+    });
     // 4. Start Express Server
     app.listen(port, () => {
       console.log(`📚 LitCritic server running at http://localhost:${port}`);
     });
-
   } catch (error) {
-    console.error('❌ Database connection failed:', error);
+    console.error("❌ Database connection failed:", error);
     process.exit(1);
   }
 }

@@ -1049,3 +1049,180 @@ Let me know if you run into any connection errors, or if you're ready to start q
 ------------------------------------------------------------------------------------------------
 
 Day 7: MongoDB – CRUD & Query Operators
+
+Awesome! Day 7 is where MongoDB really starts to shine. You've got the basics down, but today we're moving beyond simple findById and diving into the powerful query operators that make NoSQL databases so flexible.
+
+We are going to build a full CRUD API for reviews, attach them to books, and then write queries to filter and sort those reviews. This is exactly how features like "Show me 5-star reviews, newest first" are built.
+
+Here is the plan for Day 7:
+
+1. The Schema: Reviews and Nested Comments
+To use $elemMatch as requested, we need an array of subdocuments. Let's create a Review schema where users can leave comments on a specific review.
+
+Create a new file models/Review.js:
+
+JavaScript
+const mongoose = require('mongoose');
+
+const commentSchema = new mongoose.Schema({
+  user: { type: String, required: true },
+  text: { type: String, required: true },
+  date: { type: Date, default: Date.now }
+});
+
+const reviewSchema = new mongoose.Schema({
+  bookId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Book', // Assuming you have a Book model
+    required: true 
+  },
+  reviewer: { type: String, required: true },
+  rating: { 
+    type: Number, 
+    required: true,
+    min: 1,
+    max: 5
+  },
+  content: { type: String, required: true },
+  // This is where we will practice $elemMatch
+  comments: [commentSchema], 
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Review', reviewSchema);
+2. The Routes: Full CRUD
+Let's build out the routes in a new file, perhaps routes/reviews.js.
+
+A. Create a Review (POST)
+JavaScript
+// POST /api/reviews
+router.post('/', async (req, res) => {
+  try {
+    const newReview = new Review(req.body);
+    const savedReview = await newReview.save();
+    res.status(201).json(savedReview);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+B. The Powerful Find (GET with Filters & Sort)
+This is the core of today's lesson. We want to get reviews for a specific book, but we want to filter for highly-rated ones ($gt: 4) and sort them by the newest first.
+
+JavaScript
+// GET /api/books/:id/reviews
+// Example URL to hit: /api/books/12345/reviews?minRating=4
+router.get('/books/:id/reviews', async (req, res) => {
+  try {
+    const bookId = req.params.id;
+    // We can accept query parameters for flexibility, defaulting to 0 if not provided
+    const minRating = req.query.minRating ? parseInt(req.query.minRating) : 0;
+
+    const reviews = await Review.find({ 
+      bookId: bookId,
+      // Using the $gt (greater than) operator
+      rating: { $gt: minRating } 
+    })
+    // Sort by createdAt descending (-1)
+    .sort({ createdAt: -1 })
+    // Limit to top 10 results (Projection concept)
+    .limit(10); 
+
+    res.json(reviews);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+C. Using $elemMatch for Nested Data (GET)
+Let's say we want to find any review (regardless of the book) where a specific user left a comment containing the word "helpful".
+
+Because comments is an array of objects, we can't just query comments.user. We need to use $elemMatch to ensure at least one comment in the array meets all the specified criteria.
+
+JavaScript
+// GET /api/reviews/search-comments
+router.get('/search-comments', async (req, res) => {
+  try {
+    const targetUser = req.query.user;
+    const keyword = req.query.keyword;
+
+    const reviews = await Review.find({
+      comments: {
+        $elemMatch: {
+          user: targetUser,
+          // Using $regex for a simple text search
+          text: { $regex: keyword, $options: 'i' } // 'i' for case-insensitive
+        }
+      }
+    });
+
+    res.json(reviews);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+D. Update and Delete (PUT / DELETE)
+Let's finish the CRUD operations. We'll include an example of upsert in the update route.
+
+JavaScript
+// PUT /api/reviews/:id
+router.put('/:id', async (req, res) => {
+  try {
+    const updatedReview = await Review.findByIdAndUpdate(
+      req.params.id, 
+      req.body, 
+      { 
+        new: true, // Return the modified document rather than the original
+        runValidators: true,
+        // Upsert concept: If a review with this ID doesn't exist, create it.
+        // (Note: Using upsert with an explicitly provided ID can be tricky, 
+        // usually it's used with queries other than just ID, like finding by user and book)
+        upsert: true 
+      }
+    );
+    res.json(updatedReview);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// DELETE /api/reviews/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    const deletedReview = await Review.findByIdAndDelete(req.params.id);
+    if (!deletedReview) return res.status(404).json({ message: 'Review not found' });
+    res.json({ message: 'Review deleted' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+Quick Recap of Operators Used:
+$gt: Greater Than (used for rating > 4).
+
+$sort: Orders the results (-1 for descending, 1 for ascending).
+
+$limit: Restricts the number of documents returned.
+
+$elemMatch: Matches documents that contain an array field with at least one element that matches all the specified query criteria (used for our comments).
+
+$regex: Allows regular expression pattern matching (used for searching comment text).
+
+upsert: A combination of update and insert. If the document exists, update it; if it doesn't, insert it.
+
+Your Deliverable
+Set up the Review model.
+
+Implement the routes (POST, GET, PUT, DELETE).
+
+Use Postman (or your preferred tool) to:
+
+Create a few reviews (make sure some have ratings > 4 and some have nested comments).
+
+Test the GET /books/:id/reviews?minRating=4 endpoint to ensure filtering and sorting work.
+
+Test the $elemMatch endpoint by searching for a specific comment.
+
+Take your time implementing this. Working with nested arrays and query operators is a significant step up! Let me know when you have it running or if you hit any roadblocks.
+
+-------------------------------------------------------------------------------------------------------------------------------
+
+Day 8: MongoDB – Aggregation Pipeline & Indexes
+
