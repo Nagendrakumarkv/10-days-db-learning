@@ -3,25 +3,24 @@ const express = require("express");
 const { Client } = require("pg");
 const mongoose = require("mongoose"); // <-- Added Mongoose
 const reviewsRouter = require("./routes/reviews");
-const analyticsRouter = require('./routes/analytics');
+const analyticsRouter = require("./routes/analytics");
+const Review = require("./models/Review");
 
 const app = express();
 
 // Middleware to parse JSON bodies
 app.use(express.json());
 
-// Mount the router
-// Note: In my previous code, the routes in reviews.js didn't have '/api/reviews' in them.
-// By mounting it here, ALL routes in reviews.js automatically start with /api/reviews
-app.use("/api/reviews", reviewsRouter);
-
 // New Analytics routes
-app.use('/api/analytics', analyticsRouter);
+app.use("/api/analytics", analyticsRouter);
+
+// 1. CREATE pgClient FIRST
+const pgClient = new Client({ connectionString: process.env.PG_URI });
+
+// 2. THEN PASS IT TO THE ROUTER
+app.use('/api/reviews', reviewsRouter(pgClient));
 
 const port = process.env.PORT || 3000;
-
-// Initialize PostgreSQL Client
-const pgClient = new Client({ connectionString: process.env.PG_URI });
 
 async function startServer() {
   try {
@@ -72,25 +71,46 @@ async function startServer() {
       }
     });
 
-    // GET /books/:id - Fetch a single book
+    // GET /books/:id - Fetch book (PG) + Reviews (Mongo)
     app.get("/books/:id", async (req, res) => {
       try {
         const bookId = req.params.id;
-        const query = `
-          SELECT b.id, b.title, b.published_year, b.summary, a.name AS author
-          FROM books b
-          INNER JOIN authors a ON b.author_id = a.id
-          WHERE b.id = $1;
-        `;
-        const result = await pgClient.query(query, [bookId]); // $1 is replaced by bookId
 
-        if (result.rows.length === 0) {
+        // 1. Fetch structured data from PostgreSQL
+        const pgQuery = `
+      SELECT b.id, b.title, b.published_year, b.summary, a.name AS author
+      FROM books b
+      INNER JOIN authors a ON b.author_id = a.id
+      WHERE b.id = $1;
+    `;
+        const pgResult = await pgClient.query(pgQuery, [bookId]);
+
+        if (pgResult.rows.length === 0) {
           return res.status(404).json({ error: "Book not found" });
         }
-        res.status(200).json(result.rows[0]);
+
+        const bookDetails = pgResult.rows[0];
+
+        // 2. Fetch unstructured data from MongoDB
+        // Note: In Mongo, bookId was stored as an ObjectId. We might need to adjust this
+        // depending on how you saved them in Day 7. For this example, assuming bookId in Mongo
+        // was saved as a string to match the Postgres ID.
+        const reviews = await Review.find({ bookId: bookId })
+          .sort({ createdAt: -1 })
+          .select("-__v"); // Exclude the mongoose version key for cleaner output
+
+        // 3. Combine and send the polyglot response!
+        const fullResponse = {
+          ...bookDetails,
+          reviews: reviews,
+        };
+
+        res.status(200).json(fullResponse);
       } catch (err) {
         console.error(err);
-        res.status(500).json({ error: "Failed to fetch book" });
+        res
+          .status(500)
+          .json({ error: "Failed to fetch complete book profile" });
       }
     });
 
@@ -268,12 +288,10 @@ async function startServer() {
         const query = "SELECT get_book_popularity($1) AS score";
         const result = await pgClient.query(query, [req.params.id]);
 
-        res
-          .status(200)
-          .json({
-            book_id: req.params.id,
-            popularity_score: result.rows[0].score,
-          });
+        res.status(200).json({
+          book_id: req.params.id,
+          popularity_score: result.rows[0].score,
+        });
       } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to calculate popularity" });
