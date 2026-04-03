@@ -5,6 +5,9 @@ const mongoose = require("mongoose"); // <-- Added Mongoose
 const reviewsRouter = require("./routes/reviews");
 const analyticsRouter = require("./routes/analytics");
 const Review = require("./models/Review");
+const jwt = require("jsonwebtoken");
+const rateLimit = require("express-rate-limit");
+const morgan = require("morgan"); // HTTP request logger
 
 const app = express();
 
@@ -18,9 +21,38 @@ app.use("/api/analytics", analyticsRouter);
 const pgClient = new Client({ connectionString: process.env.PG_URI });
 
 // 2. THEN PASS IT TO THE ROUTER
-app.use('/api/reviews', reviewsRouter(pgClient));
+app.use("/api/reviews", reviewsRouter(pgClient));
+
+// 1. Basic Logging (Logs every request and status code to the terminal)
+app.use(morgan("dev"));
+
+// 2. Rate Limiting (Prevents DDoS and brute force attacks)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per window
+  message: { error: "Too many requests from this IP, please try again later." },
+});
+app.use(limiter); // Apply to all routes
+
+const JWT_SECRET = process.env.JWT_SECRET || "super_secret_jwt_key_for_dev";
 
 const port = process.env.PORT || 3000;
+
+// B. Middleware to Protect Routes
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1]; // Format: "Bearer <token>"
+
+  if (!token)
+    return res.status(401).json({ error: "Access denied. No token provided." });
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err)
+      return res.status(403).json({ error: "Invalid or expired token." });
+    req.user = user; // Attach user info to request
+    next(); // Move to the next function
+  });
+}
 
 async function startServer() {
   try {
@@ -46,8 +78,34 @@ async function startServer() {
       });
     });
 
+    // A. Login Route (Creates the Token)
+    app.post("/login", async (req, res) => {
+      const { username, password } = req.body;
+      try {
+        const result = await pgClient.query(
+          "SELECT * FROM users WHERE username = $1",
+          [username],
+        );
+        const user = result.rows[0];
+
+        if (user && user.password === password) {
+          // Create token valid for 1 hour
+          const token = jwt.sign(
+            { userId: user.id, username: user.username },
+            JWT_SECRET,
+            { expiresIn: "1h" },
+          );
+          res.json({ token });
+        } else {
+          res.status(401).json({ error: "Invalid credentials" });
+        }
+      } catch (err) {
+        res.status(500).json({ error: "Login failed" });
+      }
+    });
+
     // GET /books - Fetch all books with authors and genres
-    app.get("/books", async (req, res) => {
+    app.get("/books", authenticateToken, async (req, res) => {
       try {
         const query = `
           SELECT 
