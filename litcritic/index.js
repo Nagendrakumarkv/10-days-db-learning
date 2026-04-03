@@ -3,6 +3,7 @@ const express = require("express");
 const { Client } = require("pg");
 const mongoose = require("mongoose"); // <-- Added Mongoose
 const reviewsRouter = require("./routes/reviews");
+const analyticsRouter = require('./routes/analytics');
 
 const app = express();
 
@@ -13,6 +14,9 @@ app.use(express.json());
 // Note: In my previous code, the routes in reviews.js didn't have '/api/reviews' in them.
 // By mounting it here, ALL routes in reviews.js automatically start with /api/reviews
 app.use("/api/reviews", reviewsRouter);
+
+// New Analytics routes
+app.use('/api/analytics', analyticsRouter);
 
 const port = process.env.PORT || 3000;
 

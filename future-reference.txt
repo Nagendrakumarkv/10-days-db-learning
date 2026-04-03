@@ -1226,3 +1226,189 @@ Take your time implementing this. Working with nested arrays and query operators
 
 Day 8: MongoDB – Aggregation Pipeline & Indexes
 
+Welcome to Day 8! If Day 7 was about finding specific needles in a haystack, Day 8 is about stepping back and understanding the entire farm.
+
+The Aggregation Pipeline is arguably MongoDB's most powerful feature. It works like an assembly line: documents enter the pipeline, pass through a series of stages (like filtering, grouping, and sorting), and emerge at the end as transformed, analytical data. It is the NoSQL equivalent of SQL's GROUP BY, JOIN, and SELECT AS.
+
+Let's build your Analytics Dashboard!
+
+Step 1: Adding Indexes (The Speed Boost)
+Before we run heavy analytics, we need to ensure our database is optimized. Without indexes, MongoDB performs a "Collection Scan" (reading every single document). With indexes, it acts like the index of a textbook, jumping straight to the data you need.
+
+Update your models/Review.js to include indexes. Mongoose makes this very easy:
+
+JavaScript
+const mongoose = require('mongoose');
+
+const commentSchema = new mongoose.Schema({
+  user: { type: String, required: true },
+  text: { type: String, required: true },
+  date: { type: Date, default: Date.now }
+});
+
+const reviewSchema = new mongoose.Schema({
+  // Added index: true
+  bookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book', required: true, index: true },
+  reviewer: { type: String, required: true },
+  // Added index: true
+  rating: { type: Number, required: true, min: 1, max: 5, index: true },
+  content: { type: String, required: true },
+  comments: [commentSchema],
+  // Added index: true
+  createdAt: { type: Date, default: Date.now, index: true }
+});
+
+// Compound Index: Great for queries that filter by bookId AND sort by rating/date
+reviewSchema.index({ bookId: 1, createdAt: -1 }); 
+
+module.exports = mongoose.model('Review', reviewSchema);
+Note: Mongoose automatically builds these indexes in the background when your app starts.
+
+Step 2: The Aggregation Pipeline Routes
+Let's create a new file called routes/analytics.js. This will house our dashboard endpoints.
+
+Here, we will use Review.aggregate([ ...stages ]).
+
+JavaScript
+const express = require('express');
+const router = express.Router();
+const Review = require('../models/Review');
+
+// ==========================================
+// 1. Average Rating & Review Count per Book
+// GET /api/analytics/book-stats
+// ==========================================
+router.get('/book-stats', async (req, res) => {
+  try {
+    const stats = await Review.aggregate([
+      // Stage 1: Group by bookId. Calculate average rating and total count.
+      {
+        $group: {
+          _id: '$bookId', // What we are grouping by
+          averageRating: { $avg: '$rating' }, // Calculates the mean
+          totalReviews: { $sum: 1 } // Adds 1 for every document found
+        }
+      },
+      // Stage 2: Sort by highest average rating
+      { $sort: { averageRating: -1 } },
+      
+      // Stage 3 (Optional but powerful): $lookup acts like a SQL JOIN.
+      // If you have a 'books' collection, this fetches the book details!
+      {
+        $lookup: {
+          from: 'books', // The collection name in MongoDB (usually lowercase & plural)
+          localField: '_id', // The grouped bookId
+          foreignField: '_id', // The id in the books collection
+          as: 'bookDetails' // The name of the new array field to output
+        }
+      }
+    ]);
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==========================================
+// 2. Top Reviewers (Who writes the most reviews?)
+// GET /api/analytics/top-reviewers
+// ==========================================
+router.get('/top-reviewers', async (req, res) => {
+  try {
+    const topReviewers = await Review.aggregate([
+      // Stage 1: Group by reviewer name
+      {
+        $group: {
+          _id: '$reviewer',
+          reviewCount: { $sum: 1 }
+        }
+      },
+      // Stage 2: Sort descending by count
+      { $sort: { reviewCount: -1 } },
+      // Stage 3: Only return the top 5
+      { $limit: 5 }
+    ]);
+    res.json(topReviewers);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==========================================
+// 3. Most Commented Reviews (Using Array Size)
+// GET /api/analytics/most-commented
+// ==========================================
+router.get('/most-commented', async (req, res) => {
+  try {
+    const highlyCommented = await Review.aggregate([
+      // Stage 1: $addFields (or $project) allows us to create a computed field
+      // Here, we calculate the length of the 'comments' array
+      {
+        $addFields: {
+          commentCount: { $size: '$comments' }
+        }
+      },
+      // Stage 2: We only want reviews that actually have comments
+      { $match: { commentCount: { $gt: 0 } } },
+      // Stage 3: Sort by highest comment count
+      { $sort: { commentCount: -1 } },
+      // Stage 4: Limit to top 5
+      { $limit: 5 },
+      // Stage 5: Clean up the output using $project (like SQL SELECT)
+      {
+        $project: {
+          reviewer: 1,
+          content: 1,
+          commentCount: 1,
+          rating: 1
+        }
+      }
+    ]);
+    res.json(highlyCommented);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+module.exports = router;
+Step 3: Mount the Router
+Don't forget to mount your new analytics router in your main index.js file, right below your review routes!
+
+JavaScript
+const analyticsRouter = require('./routes/analytics');
+
+// Existing routes
+app.use('/api/reviews', reviewsRouter);
+
+// New Analytics routes
+app.use('/api/analytics', analyticsRouter);
+🧠 Brief Concept Refresher: Sharding Basics
+Since your goals mentioned sharding, here is the 30-second conceptual rundown:
+
+Scaling Up (Vertical): Buying a bigger, more expensive server (more RAM/CPU).
+
+Scaling Out (Horizontal / Sharding): Splitting your database across multiple cheaper servers.
+
+How MongoDB does it: It uses a Shard Key (an indexed field, like bookId or userId). MongoDB looks at the Shard Key and says, "Books A-M go to Server 1, Books N-Z go to Server 2." This allows MongoDB to handle massive amounts of data that wouldn't fit on a single hard drive!
+
+Your Deliverable Checklist:
+Update your Review.js schema with the index: true properties.
+
+Create routes/analytics.js and paste in the aggregation pipelines.
+
+Mount /api/analytics in your main index.js file.
+
+Open Postman and hit:
+
+GET http://localhost:3000/api/analytics/book-stats
+
+GET http://localhost:3000/api/analytics/top-reviewers
+
+GET http://localhost:3000/api/analytics/most-commented
+
+Tip: Make sure you have created at least 4 or 5 reviews (using your POST endpoint from Day 7) with a mix of different reviewers and comment counts so your dashboard actually has interesting data to show! Let me know how the aggregation pipeline feels to you!
+
+-----------------------------------------------------------------------------------------------------------------------
+
+Day 9: Integration – Polyglot Persistence in Action
+
